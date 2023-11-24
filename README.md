@@ -2,7 +2,7 @@
 
 In this lab we will explore a topology consisting of a Leaf/Spine [SR Linux](https://learn.srlinux.dev/) Fabric connected to a Kubernetes Cluster.
 
-Our k8s Cluster will feature [MetalLB](https://metallb.universe.tf/), which is a load-balancer implementation for bare metal clusters. This will unlock the possibility to have **anycast** services in our fabric.
+Our k8s Cluster will feature Cilium. This will unlock the possibility to have **anycast** services in our fabric.
 
 To deploy this lab we will use [Containerlab](https://containerlab.dev/) which help us to effortlessly create complex network topologies and validate features, scenarios... And also, [Minikube](https://minikube.sigs.k8s.io/) which is an open-source tool that facilitates running Kubernetes clusters locally to quickly test and experiment with containerized applications.
 
@@ -18,7 +18,7 @@ For a detailed walkthrough of this lab please check the [SR Linux blog](https://
 
 ## Goal
 
-Demonstrate kubernetes MetalLB load balancing scenario in a Containerlab+Minikube Lab.
+Demonstrate Cilium kubernetes CNI load balancing scenario in a Containerlab+Minikube Lab.
 
 ## Features
 
