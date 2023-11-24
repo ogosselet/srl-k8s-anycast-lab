@@ -24,7 +24,7 @@ Demonstrate Cilium kubernetes CNI load balancing scenario in a Containerlab+Mini
 
 - Containerlab topology
 - Minikube kubernetes cluster (3 nodes)
-- MetalLB integration (FRR mode)
+- Cilium CNI integration (Native routing mode)
 - Preconfigured Leaf/Spine Fabric: 2xSpine, 4xLeaf SR Linux switches
 - Anycast services
 - Linux clients to simulate connections to k8s services (4 clients)
@@ -36,6 +36,7 @@ Demonstrate Cilium kubernetes CNI load balancing scenario in a Containerlab+Mini
 - [Docker](https://docs.docker.com/engine/install/)
 - [SR Linux Container image](https://github.com/nokia/srlinux-container-image)
 - [kubectl](https://kubernetes.io/docs/tasks/tools/)
+- [cilium](https://docs.cilium.io/en/stable/gettingstarted/k8s-install-default/)
 
 ## Deploying the lab
 
@@ -46,7 +47,7 @@ git clone https://github.com/srl-labs/srl-k8s-anycast-lab && cd srl-k8s-anycast-
 
 ```bash
 # deploy minikube cluster
-minikube start --nodes 3 -p cluster1
+minikube start --nodes 3 -p cluster1 --network-plugin=cni --cni=false
 ```
 
 ```bash
@@ -55,18 +56,30 @@ clab deploy --topo srl-k8s-lab.clab.yml
 ```
 
 ```bash
-# enable MetalLB addons
-minikube addons enable metallb -p cluster1
+# Install Cilium
+cilium install --version 1.14.3 --set tunnel=disabled,routingMode=native,kubeProxyReplacement=true,ipv4NativeRoutingCIDR=192.168.0.0/19
 ```
 
 ```bash
-# install MetalLB (BGP FRR mode)
-kubectl apply -f https://raw.githubusercontent.com/metallb/metallb/main/config/manifests/metallb-frr.yaml
+# Fine tune Cilium installation (Enable BGP control plane)
+cilium config set enable-bgp-control-plane true
+# Fine tune Cilium installation (Allow native-routing using our eth1 interface)
+cilium config set devices eth1 
+# Restart the Cilium operator
+kubectl get pods -n kube-system --no-headers -o custom-columns=":metadata.name" | grep cilium-operator | xargs kubectl delete -n kube-system pod
+# These commands should be integrated in the Install Cilium step but I don't
+# find it easy to find the correct set version (helm equivalent) of the Cilium CLI
+# arguments  
 ```
 
+
 ```bash
-# setup MetalLB
-kubectl apply -f metallb.yaml
+# Configure Cilium
+kubectl label nodes cluster1 bgp-policy=srl-k8s-anycast
+kubectl label nodes cluster1-m02 bgp-policy=srl-k8s-anycast
+kubectl label nodes cluster1-m03 bgp-policy=srl-k8s-anycast
+kubectl apply -f cilium-bgp-policy.yaml
+kubectl apply -f cilium-lb-ippool.yaml
 ```
 
 ```bash

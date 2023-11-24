@@ -32,4 +32,4 @@ spec:
   selector:
     app: nginxhello
   type: LoadBalancer
-  externalTrafficPolicy: Cluster
+#  externalTrafficPolicy: Cluster
