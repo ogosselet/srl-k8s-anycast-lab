@@ -56,9 +56,23 @@ clab deploy --topo srl-k8s-lab.clab.yml
 ```
 
 ```bash
-# Install Cilium
-cilium install --version 1.14.3 --set tunnel=disabled,routingMode=native,kubeProxyReplacement=true,ipv4NativeRoutingCIDR=192.168.0.0/19
+# Prepare minikube for kube proxy replacement
+kubectl -n kube-system delete ds kube-proxy
+kubectl -n kube-system delete cm kube-proxy
+docker exec cluster1 bash -c "iptables-save | grep -v KUBE | iptables-restore"
+docker exec cluster1-m02 bash -c "iptables-save | grep -v KUBE | iptables-restore"
+docker exec cluster1-m03 bash -c "iptables-save | grep -v KUBE | iptables-restore"
 ```
+
+```bash
+# Install Cilium
+cilium install --version 1.14.3 --set tunnel=disabled,routingMode=native,kubeProxyReplacement=true,ipv4NativeRoutingCIDR=192.168.0.0/16,ipam.mode=cluster-pool,ipam.operator.clusterPoolIPv4PodCIDRList=192.168.16.0/20
+```
+
+Kube-proxy replaced by Cilium
+POD IPAM done by Cilium
+Native routing
+
 
 ```bash
 # Fine tune Cilium installation (Enable BGP control plane)
@@ -71,7 +85,6 @@ kubectl get pods -n kube-system --no-headers -o custom-columns=":metadata.name" 
 # find it easy to find the correct set version (helm equivalent) of the Cilium CLI
 # arguments  
 ```
-
 
 ```bash
 # Configure Cilium
@@ -103,12 +116,8 @@ kubectl get pods -o wide
 
 kubectl get svc
 
-# check MetalLB BGP speaker pods in kubernetes nodes
-kubectl get pods -A | grep speaker
-
-# connect to MetalLB speaker pod
-# change speaker-4gcj8 with the name of one of the speakers
-kubectl exec -it speaker-4gcj8 --namespace=metallb-system -- vtysh
+# check Cilium BGP peers
+cilium bgp peers
 
 # verify BGP sessions in FRR daemon
 cluster1$ show bgp summary
@@ -116,22 +125,33 @@ cluster1$ show bgp summary
 # verify running config of FRR daemon
 cluster1$ show run
 
+# Define the LB Pool IP assigned to the NGINX LB Service
+kubectl get svc
+NAME         TYPE           CLUSTER-IP     EXTERNAL-IP     PORT(S)        AGE
+kubernetes   ClusterIP      10.96.0.1      <none>          443/TCP        5m16s
+nginxhello   LoadBalancer   10.102.6.162   192.168.33.83   80:31321/TCP   40s
+
 # check HTTP echo service
-docker exec -it client4 curl 1.1.1.100
-Server address: 10.244.0.3:80
-Server name: nginxhello-6b97fd8857-4vp6z
-Date: 10/Aug/2023:09:06:01 +0000
+docker exec -it client4 curl http://192.168.33.83
+Server address: 192.168.18.57:80
+Server name: nginxhello-dc44dc-djjjl
+Date: 28/Nov/2023:22:34:37 +0000
 URI: /
-Request ID: f84edead22027f72b2dc951fbfe96b4f
+Request ID: 4a2018487f43df842350c7a432e9ee30
 
-# check HTTP echo service once again
-docker exec -it client4 curl 1.1.1.100
-Server address: 10.244.2.3:80
-Server name: nginxhello-6b97fd8857-b2vf8
-Date: 10/Aug/2023:09:06:03 +0000
+docker exec -it client4 curl http://192.168.33.83
+Server address: 192.168.16.70:80
+Server name: nginxhello-dc44dc-5bg8h
+Date: 28/Nov/2023:22:34:38 +0000
 URI: /
-Request ID: f03d053c39bd725519e86fa5b588f7f6
+Request ID: 63f7546dbfef0a2ca20dee2ea3e8335d
 
+docker exec -it client4 curl http://192.168.33.83
+Server address: 192.168.17.172:80
+Server name: nginxhello-dc44dc-ql67p
+Date: 28/Nov/2023:22:34:40 +0000
+URI: /
+Request ID: 6dbeeb681a8ce8021b3c7b5883ee9143
 # requests are load balanced to different pods
 ```
 
