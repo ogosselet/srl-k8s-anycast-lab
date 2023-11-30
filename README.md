@@ -166,3 +166,83 @@ clab destroy --topo srl-k8s-lab.clab.yml --cleanup
 # delete Minikube cluster
 minikube delete --all
 ```
+
+## Low level details on packet flow
+
+These are the evidence that some packets don't go via the SRL fabric
+
+```
+# Node, PODs, LB Service IP info (for reference)
+
+[ec2-user@ip-10-10-3-9 ~]$ kubectl get nodes -o wide
+NAME           STATUS   ROLES           AGE   VERSION   INTERNAL-IP    EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION                  CONTAINER-RUNTIME
+cluster1       Ready    control-plane   27m   v1.28.3   192.168.49.2   <none>        Ubuntu 22.04.3 LTS   6.1.61-85.141.amzn2023.x86_64   docker://24.0.7
+cluster1-m02   Ready    <none>          27m   v1.28.3   192.168.49.3   <none>        Ubuntu 22.04.3 LTS   6.1.61-85.141.amzn2023.x86_64   docker://24.0.7
+cluster1-m03   Ready    <none>          26m   v1.28.3   192.168.49.4   <none>        Ubuntu 22.04.3 LTS   6.1.61-85.141.amzn2023.x86_64   docker://24.0.7
+
+[ec2-user@ip-10-10-3-9 ~]$ kubectl get pods -o wide
+NAME                      READY   STATUS    RESTARTS   AGE   IP               NODE           NOMINATED NODE   READINESS GATES
+nginxhello-dc44dc-57p9r   1/1     Running   0          16m   192.168.16.238   cluster1-m03   <none>           <none>
+nginxhello-dc44dc-r6chf   1/1     Running   0          16m   192.168.18.126   cluster1-m02   <none>           <none>
+nginxhello-dc44dc-rbmzt   1/1     Running   0          16m   192.168.17.123   cluster1       <none>           <none>
+[ec2-user@ip-10-10-3-9 ~]$ kubectl get svc
+NAME         TYPE           CLUSTER-IP     EXTERNAL-IP      PORT(S)        AGE
+kubernetes   ClusterIP      10.96.0.1      <none>           443/TCP        22m
+nginxhello   LoadBalancer   10.97.152.33   192.168.33.226   80:31241/TCP   16m
+
+[ec2-user@ip-10-10-3-9 ~]$ docker network inspect cluster1 | egrep "(Mac|IPv4)"
+                "MacAddress": "02:42:c0:a8:31:04",
+                "IPv4Address": "192.168.49.4/24",
+                "MacAddress": "02:42:c0:a8:31:02",
+                "IPv4Address": "192.168.49.2/24",
+                "MacAddress": "02:42:c0:a8:31:03",
+                "IPv4Address": "192.168.49.3/24",
+
+bridge fdb | grep 02:42:c0:a8:31:02
+02:42:c0:a8:31:02 dev vethb253dcd master br-ad531a98605c
+
+# Client4 => LB Svc - Captured on Leaf1 e1-1 (sudo ip netns exec leaf1 tcpdump -nni e1-1 tcp port 80)
+
+root@client4:/ $ curl http://192.168.33.226
+Server address: 192.168.18.126:80
+Server name: nginxhello-dc44dc-r6chf
+Date: 30/Nov/2023:20:11:23 +0000
+URI: /
+Request ID: 456638c93c60e487927452734c21f080
+
+20:11:23.046431 IP 192.168.2.14.34566 > 192.168.33.226.80: Flags [S], seq 399663693, win 56760, options [mss 9460,sackOK,TS val 1817658588 ecr 0,nop,wscale 7], length 0
+20:11:23.046456 IP 192.168.49.2.34566 > 192.168.18.126.80: Flags [S], seq 399663693, win 56760, options [mss 9460,sackOK,TS val 1817658588 ecr 0,nop,wscale 7], length 0
+20:11:23.046971 IP 192.168.33.226.80 > 192.168.2.14.34566: Flags [S.], seq 2535097468, ack 399663694, win 65160, options [mss 1460,sackOK,TS val 2236510185 ecr 1817658588,nop,wscale 7], length 0
+20:11:23.047667 IP 192.168.2.14.34566 > 192.168.33.226.80: Flags [.], ack 1, win 444, options [nop,nop,TS val 1817658589 ecr 2236510185], length 0
+20:11:23.047676 IP 192.168.49.2.34566 > 192.168.18.126.80: Flags [.], ack 2535097469, win 444, options [nop,nop,TS val 1817658589 ecr 2236510185], length 0
+20:11:23.047700 IP 192.168.2.14.34566 > 192.168.33.226.80: Flags [P.], seq 1:79, ack 1, win 444, options [nop,nop,TS val 1817658589 ecr 2236510185], length 78: HTTP: GET / HTTP/1.1
+20:11:23.047704 IP 192.168.49.2.34566 > 192.168.18.126.80: Flags [P.], seq 0:78, ack 1, win 444, options [nop,nop,TS val 1817658589 ecr 2236510185], length 78: HTTP: GET / HTTP/1.1
+20:11:23.048296 IP 192.168.33.226.80 > 192.168.2.14.34566: Flags [.], ack 79, win 509, options [nop,nop,TS val 2236510187 ecr 1817658589], length 0
+20:11:23.048410 IP 192.168.33.226.80 > 192.168.2.14.34566: Flags [P.], seq 1:371, ack 79, win 509, options [nop,nop,TS val 2236510187 ecr 1817658589], length 370: HTTP: HTTP/1.1 200 OK
+20:11:23.049003 IP 192.168.2.14.34566 > 192.168.33.226.80: Flags [.], ack 371, win 442, options [nop,nop,TS val 1817658590 ecr 2236510187], length 0
+20:11:23.049013 IP 192.168.49.2.34566 > 192.168.18.126.80: Flags [.], ack 371, win 442, options [nop,nop,TS val 1817658590 ecr 2236510187], length 0
+20:11:23.049425 IP 192.168.2.14.34566 > 192.168.33.226.80: Flags [F.], seq 79, ack 371, win 442, options [nop,nop,TS val 1817658590 ecr 2236510187], length 0
+20:11:23.049434 IP 192.168.49.2.34566 > 192.168.18.126.80: Flags [F.], seq 78, ack 371, win 442, options [nop,nop,TS val 1817658590 ecr 2236510187], length 0
+20:11:23.049998 IP 192.168.33.226.80 > 192.168.2.14.34566: Flags [F.], seq 371, ack 80, win 509, options [nop,nop,TS val 2236510189 ecr 1817658590], length 0
+20:11:23.050497 IP 192.168.2.14.34566 > 192.168.33.226.80: Flags [.], ack 372, win 442, options [nop,nop,TS val 1817658592 ecr 2236510189], length 0
+20:11:23.050505 IP 192.168.49.2.34566 > 192.168.18.126.80: Flags [.], ack 372, win 442, options [nop,nop,TS val 1817658592 ecr 2236510189], length 0
+
+
+What we see:
+
+- request coming from client4 (192.168.2.14) => LB VIP on cluster 1 (192.168.33.226)
+- LB sending traffic to POD on cluster1-m03 (192.168.16.238)  ... traffic is NATed with node IP (192.168.49.2) :-( 
+
+=> we don't see the return traffic via our fabric; it goes over the minikube bridge interface
+
+sudo tcpdump -nni vethb253dcd tcp port 80
+
+20:11:23.046960 IP 192.168.18.126.80 > 192.168.49.2.34566: Flags [S.], seq 2535097468, ack 399663694, win 65160, options [mss 1460,sackOK,TS val 2236510185 ecr 1817658588,nop,wscale 7], length 0
+20:11:23.048288 IP 192.168.18.126.80 > 192.168.49.2.34566: Flags [.], ack 79, win 509, options [nop,nop,TS val 2236510187 ecr 1817658589], length 0
+20:11:23.048400 IP 192.168.18.126.80 > 192.168.49.2.34566: Flags [P.], seq 1:371, ack 79, win 509, options [nop,nop,TS val 2236510187 ecr 1817658589], length 370: HTTP: HTTP/1.1 200 OK
+20:11:23.049990 IP 192.168.18.126.80 > 192.168.49.2.34566: Flags [F.], seq 371, ack 80, win 509, options [nop,nop,TS val 2236510189 ecr 1817658590], length 0
+
+
+Most of the traffic is via the simulated fabric ... but it is a pitty to have those few packets still going over the docker bridge :-(
+
+```
